@@ -17,6 +17,9 @@ contract NFTMarketStakePoolTest is Test {
     Account alice = makeAccount("alice");
     Account bob = makeAccount("bob");
     Account bob2 = makeAccount("bob2");
+    Account carol = makeAccount("carol");
+    Account dave = makeAccount("dave");
+    Account eve = makeAccount("eve");
 
     uint256 tokenId = 0;
     uint256 price = 1e18;
@@ -150,6 +153,7 @@ contract NFTMarketStakePoolTest is Test {
         stakePool.stake{value: 1 ether}();
         assertEq(stakePool.totalStaked(), 1 ether);
         assertEq(address(stakePool).balance, 1 ether);
+        vm.stopPrank();
         _buyNFT();
 
         uint256 balanceBefore = alice.addr.balance;
@@ -164,6 +168,87 @@ contract NFTMarketStakePoolTest is Test {
         assertEq(userStake.rewards, 0);
         assertEq(stakePool.poolIndex(), 0.003 ether);
         assertEq(stakePool.totalStaked(), 1 ether);
+    }
+
+    function testMultipleStakePool() public {
+        vm.startPrank(alice.addr);
+        vm.deal(alice.addr, 1 ether);
+        stakePool.stake{value: 1 ether}();
+        assertEq(stakePool.totalStaked(), 1 ether);
+        assertEq(address(stakePool).balance, 1 ether);
+        vm.stopPrank();
+        _buyNFT();
+
+        vm.startPrank(bob.addr);
+        vm.deal(bob.addr, 1 ether);
+        stakePool.stake{value: 1 ether}();
+        assertEq(stakePool.totalStaked(), 2 ether);
+        assertEq(address(stakePool).balance, 2.003 ether);
+
+        vm.stopPrank();
+
+        vm.startPrank(carol.addr);
+        vm.deal(carol.addr, 1 ether);
+        stakePool.stake{value: 1 ether}();
+        assertEq(stakePool.totalStaked(), 3 ether);
+        assertEq(address(stakePool).balance, 3.003 ether);
+
+        vm.stopPrank();
+
+        vm.startPrank(dave.addr);
+        vm.deal(dave.addr, 1 ether);
+        stakePool.stake{value: 1 ether}();
+        assertEq(stakePool.totalStaked(), 4 ether);
+        assertEq(address(stakePool).balance, 4.003 ether);
+
+        vm.stopPrank();
+
+        vm.startPrank(owner.addr);
+        nft.approve(address(nftmarket), tokenId);
+        nftmarket.list(address(nft), tokenId, address(0), price, deadline);
+        orderId = nftmarket.listing(address(nft), tokenId);
+        vm.stopPrank();
+
+        vm.startPrank(alice.addr);
+        vm.deal(alice.addr, 1 ether);
+        nftmarket.buy{value: 1 ether}(orderId);
+        assertEq(nft.ownerOf(tokenId), alice.addr);
+        assertEq(address(stakePool).balance, 4.006 ether);
+        vm.stopPrank();
+
+        vm.startPrank(eve.addr);
+        vm.deal(eve.addr, 1 ether);
+        stakePool.stake{value: 1 ether}();
+        assertEq(stakePool.totalStaked(), 5 ether);
+        assertEq(address(stakePool).balance, 5.006 ether);
+        vm.stopPrank();
+
+        vm.startPrank(owner.addr);
+        nft.safeMint(owner.addr, "https://ipfs.io/ipfs/QmSsYRx3LpDAb1GZQm7zZ1AuHZjfbPkD6J7s9r41xu1mf8");
+        nft.approve(address(nftmarket), 2);
+        nftmarket.list(address(nft), 2, address(0), price, deadline);
+        orderId = nftmarket.listing(address(nft), 2);
+        vm.stopPrank();
+
+        vm.startPrank(alice.addr);
+        vm.deal(alice.addr, 1 ether);
+        nftmarket.buy{value: 1 ether}(orderId);
+        assertEq(nft.ownerOf(2), alice.addr);
+        assertEq(address(stakePool).balance, 5.009 ether);
+        vm.stopPrank();
+
+        uint256 balanceBefore = alice.addr.balance;
+        assertEq(balanceBefore, 0 ether);
+        vm.prank(alice.addr);
+        stakePool.claim();
+
+        assertEq(alice.addr.balance - balanceBefore, 0.00435 ether);
+        NFTMarketStakePool.UserStakeInfo memory userStake = stakePool.getStakes(alice.addr);
+        assertEq(userStake.amount, 1 ether);
+        assertEq(userStake.index, 0.00435 ether);
+        assertEq(userStake.rewards, 0);
+        assertEq(stakePool.poolIndex(), 0.00435 ether);
+        assertEq(stakePool.totalStaked(), 5 ether);
     }
 
     function _buyNFT() public {
