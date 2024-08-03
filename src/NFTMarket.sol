@@ -7,10 +7,10 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {Test, console} from "forge-std/Test.sol";
 
-contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
-    address public constant ETH_FLAG =
-        address(0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE);
+contract NFTMarket is Ownable(msg.sender), EIP712("NFTMarket", "1") {
+    address public constant ETH_FLAG = address(0);
     uint256 public constant feeBP = 30; // 30/10000 = 0.3%
     address public whiteListSigner;
     address public feeTo;
@@ -26,33 +26,23 @@ contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
         uint256 deadline;
     }
 
-    function listing(
-        address nft,
-        uint256 tokenId
-    ) external view returns (bytes32) {
+    function listing(address nft, uint256 tokenId) external view returns (bytes32) {
+        // 获取nft和tokenId对应的id
         bytes32 id = _lastIds[nft][tokenId];
+        // 如果listingOrders中id对应的seller地址为0，则返回bytes32(0x00)，否则返回id
         return listingOrders[id].seller == address(0) ? bytes32(0x00) : id;
     }
 
-    function list(
-        address nft,
-        uint256 tokenId,
-        address payToken,
-        uint256 price,
-        uint256 deadline
-    ) external {
+    function list(address nft, uint256 tokenId, address payToken, uint256 price, uint256 deadline) external {
         require(deadline > block.timestamp, "MKT: deadline is in the past");
         require(price > 0, "MKT: price is zero");
-        require(
-            payToken == address(0) || IERC20(payToken).totalSupply() > 0,
-            "MKT: payToken is not valid"
-        );
+        require(payToken == address(0) || IERC20(payToken).totalSupply() > 0, "MKT: payToken is not valid");
 
         // safe check
         require(IERC721(nft).ownerOf(tokenId) == msg.sender, "MKT: not owner");
         require(
-            IERC721(nft).getApproved(tokenId) == address(this) ||
-                IERC721(nft).isApprovedForAll(msg.sender, address(this)),
+            IERC721(nft).getApproved(tokenId) == address(this)
+                || IERC721(nft).isApprovedForAll(msg.sender, address(this)),
             "MKT: not approved"
         );
 
@@ -67,13 +57,15 @@ contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
 
         bytes32 orderId = keccak256(abi.encode(order));
         // safe check repeat list
-        require(
-            listingOrders[orderId].seller == address(0),
-            "MKT: order already listed"
-        );
+        require(listingOrders[orderId].seller == address(0), "MKT: order already listed");
         listingOrders[orderId] = order;
         _lastIds[nft][tokenId] = orderId; // reset
         emit List(nft, tokenId, orderId, msg.sender, payToken, price, deadline);
+    }
+
+    // 确保 listingOrders 函数返回 SellOrder 类型
+    function getListingOrders(bytes32 orderId) external view returns (SellOrder memory) {
+        return listingOrders[orderId];
     }
 
     function cancel(bytes32 orderId) external {
@@ -86,45 +78,38 @@ contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
     }
 
     function buy(bytes32 orderId) public payable {
+        console.log("Buy order is starting");
         _buy(orderId, feeTo);
     }
 
-    function buy(
-        bytes32 orderId,
-        bytes calldata signatureForWL
-    ) external payable {
+    function buy(bytes32 orderId, bytes calldata signatureForWL) external payable {
         _checkWL(signatureForWL);
         // trade fee is zero
         _buy(orderId, address(0));
     }
 
     function _buy(bytes32 orderId, address feeReceiver) private {
+        console.log("Buy order is starting _buy", msg.sender);
         // 0. load order info to memory for check and read
         SellOrder memory order = listingOrders[orderId];
 
         // 1. check
         require(order.seller != address(0), "MKT: order not listed");
         require(order.deadline > block.timestamp, "MKT: order expired");
-
+        console.log("Buy order", order.payToken);
         // 2. remove order info before transfer
         delete listingOrders[orderId];
         // 3. trasnfer NFT
-        IERC721(order.nft).safeTransferFrom(
-            order.seller,
-            msg.sender,
-            order.tokenId
-        );
+        IERC721(order.nft).safeTransferFrom(order.seller, msg.sender, order.tokenId);
 
         // 4. trasnfer token
         // fee 0.3% or 0
-        uint256 fee = feeReceiver == address(0)
-            ? 0
-            : (order.price * feeBP) / 10000;
+        uint256 fee = feeReceiver == address(0) ? 0 : (order.price * feeBP) / 10000;
         // safe check
         if (order.payToken == ETH_FLAG) {
             require(msg.value == order.price, "MKT: wrong eth value");
         } else {
-            require(msg.value == 0, "MKT: wrong eth value");
+            require(msg.value == 0, "MKT: ETH value should be zero");
         }
         _transferOut(order.payToken, order.seller, order.price - fee);
         if (fee > 0) _transferOut(order.payToken, feeReceiver, fee);
@@ -135,8 +120,8 @@ contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
     function _transferOut(address token, address to, uint256 amount) private {
         if (token == ETH_FLAG) {
             // eth
-            (bool success, ) = to.call{value: amount}("");
-            require(success, "MKT: transfer failed");
+            (bool success,) = to.call{value: amount}("");
+            require(success, "MKT: transfer fee failed");
         } else {
             SafeERC20.safeTransferFrom(IERC20(token), msg.sender, to, amount);
         }
@@ -146,9 +131,7 @@ contract NFTMarket is Ownable(msg.sender), EIP712("OpenSpaceNFTMarket", "1") {
 
     function _checkWL(bytes calldata signature) private view {
         // check whiteListSigner for buyer
-        bytes32 wlHash = _hashTypedDataV4(
-            keccak256(abi.encode(WL_TYPEHASH, msg.sender))
-        );
+        bytes32 wlHash = _hashTypedDataV4(keccak256(abi.encode(WL_TYPEHASH, msg.sender)));
         address signer = ECDSA.recover(wlHash, signature);
         require(signer == whiteListSigner, "MKT: not whiteListSigner");
     }
